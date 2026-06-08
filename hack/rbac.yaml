@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: contour-envoy-mcp
+  namespace: projectcontour
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: contour-envoy-mcp
+  labels:
+    app.kubernetes.io/name: contour-envoy-mcp
+rules:
+  # Contour HTTPProxy resources
+  - apiGroups: ["projectcontour.io"]
+    resources:
+      - httpproxies
+      - tlscertificatedelegations
+      - extensionservices
+    verbs: ["get", "list"]
+  # Gateway API (if used alongside Contour)
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources:
+      - httproutes
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: contour-envoy-mcp
+  labels:
+    app.kubernetes.io/name: contour-envoy-mcp
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: contour-envoy-mcp
+subjects:
+  - kind: ServiceAccount
+    name: contour-envoy-mcp
+    namespace: projectcontour
