@@ -1,0 +1,28 @@
+{
+  "group": {
+    "default": {
+      "targets": ["contour-envoy-mcp"]
+    }
+  },
+  "variable": {
+    "TAG": {
+      "default": "latest"
+    }
+  },
+  "target": {
+    "contour-envoy-mcp": {
+      "dockerfile": "Dockerfile",
+      "context": ".",
+      "platforms": ["linux/amd64", "linux/arm64"],
+      "tags": [
+        "ghcr.io/snapp-incubator/contour-envoy-mcp:${TAG}"
+      ],
+      "cache-from": [
+        "type=gha,scope=contour-envoy-mcp"
+      ],
+      "cache-to": [
+        "type=gha,mode=max,scope=contour-envoy-mcp"
+      ]
+    }
+  }
+}

@@ -2,6 +2,10 @@
 bin/
 *.exe
 
+# Test
+coverage.out
+coverage.html
+
 # IDE
 .idea/
 .vscode/
