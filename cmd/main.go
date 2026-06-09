@@ -2,13 +2,16 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
-	"log"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -27,6 +30,13 @@ var (
 )
 
 func main() {
+	if err := run(); err != nil {
+		slog.Error("fatal error", "err", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	var (
 		transport     string
 		addr          string
@@ -34,6 +44,7 @@ func main() {
 		kubeContext   string
 		envoyAdminURL string
 		contourNs     string
+		logLevel      string
 		showVersion   bool
 	)
 
@@ -43,90 +54,104 @@ func main() {
 	flag.StringVar(&kubeContext, "context", "", "Kubernetes context to use from kubeconfig")
 	flag.StringVar(&envoyAdminURL, "envoy-admin-url", "", "Envoy admin API base URL (e.g. http://envoy.projectcontour:9001)")
 	flag.StringVar(&contourNs, "contour-namespace", "projectcontour", "Default namespace for Contour resources")
+	flag.StringVar(&logLevel, "log-level", "info", "Log level: debug, info, warn, error")
 	flag.BoolVar(&showVersion, "version", false, "Print version and exit")
 	flag.Parse()
 
 	if showVersion {
 		fmt.Printf("contour-envoy-mcp %s (commit: %s, built: %s)\n", version, commit, date)
-		os.Exit(0)
+		return nil
 	}
 
-	log.Printf("contour-envoy-mcp %s starting (transport=%s)", version, transport)
+	setupLogger(logLevel)
+	slog.Info("starting", "service", "contour-envoy-mcp", "version", version, "transport", transport)
 
-	// Initialize Kubernetes client
+	// Root context cancelled on SIGINT/SIGTERM so both transports shut down
+	// gracefully (OpenShift sends SIGTERM on pod termination).
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	k8sClient, err := k8s.NewClient(kubeconfig, kubeContext)
 	if err != nil {
-		log.Fatalf("Failed to create Kubernetes client: %v", err)
+		return fmt.Errorf("create kubernetes client: %w", err)
 	}
-	log.Println("Kubernetes client initialized")
+	slog.Info("kubernetes client initialized")
 
-	// Initialize Contour client
 	contourClient := contour.NewClient(k8sClient.DynamicClient(), contourNs)
-	log.Println("Contour client initialized")
-
-	// Initialize Envoy admin client
 	envoyClient := envoy.NewAdminClient(envoyAdminURL)
-	if envoyAdminURL != "" {
-		log.Printf("Envoy admin client initialized (url=%s)", envoyAdminURL)
-	} else {
-		log.Println("Envoy admin client initialized (no explicit URL, will use per-request overrides)")
-	}
+	slog.Info("clients initialized", "contourNamespace", contourNs, "envoyAdminURL", envoyAdminURL)
 
-	// Create MCP server
 	mcpServer := server.NewMCPServer(
 		"contour-envoy-mcp",
 		version,
 		server.WithToolCapabilities(true),
 	)
 
-	// Register all tools
 	registry := tools.NewRegistry(contourClient, envoyClient)
 	if err := registry.RegisterAll(mcpServer); err != nil {
-		log.Fatalf("Failed to register tools: %v", err)
+		return fmt.Errorf("register tools: %w", err)
 	}
-	log.Printf("Registered %d MCP tools", registry.ToolCount())
-
-	// Start server with chosen transport
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	slog.Info("tools registered", "count", registry.ToolCount())
 
 	switch transport {
 	case "stdio":
-		serveStdio(mcpServer, ctx)
+		return serveStdio(ctx, mcpServer)
 	case "streamable-http":
-		serveHTTP(mcpServer, addr, ctx)
+		return serveHTTP(ctx, mcpServer, addr)
 	default:
-		log.Fatalf("Unknown transport: %s (use stdio or streamable-http)", transport)
+		return fmt.Errorf("unknown transport %q (use stdio or streamable-http)", transport)
 	}
-
-	// Wait for shutdown signal
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
-	log.Println("Shutting down...")
-	cancel()
 }
 
-func serveStdio(mcpServer *server.MCPServer, ctx context.Context) {
+// setupLogger configures the default structured logger. Output goes to stderr
+// because in stdio transport mode stdout is the MCP protocol channel and must
+// not be polluted with log lines.
+func setupLogger(level string) {
+	var lvl slog.Level
+	switch strings.ToLower(level) {
+	case "debug":
+		lvl = slog.LevelDebug
+	case "warn":
+		lvl = slog.LevelWarn
+	case "error":
+		lvl = slog.LevelError
+	default:
+		lvl = slog.LevelInfo
+	}
+	handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: lvl})
+	slog.SetDefault(slog.New(handler))
+}
+
+func serveStdio(ctx context.Context, mcpServer *server.MCPServer) error {
+	slog.Info("serving on stdio")
 	stdioServer := server.NewStdioServer(mcpServer)
-	go func() {
-		if err := stdioServer.Listen(ctx, os.Stdin, os.Stdout); err != nil {
-			log.Fatalf("Stdio server error: %v", err)
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- stdioServer.Listen(ctx, os.Stdin, os.Stdout) }()
+
+	select {
+	case <-ctx.Done():
+		slog.Info("shutting down (signal received)")
+		return nil
+	case err := <-errCh:
+		// EOF / context cancellation are normal stream terminations.
+		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.EOF) {
+			return fmt.Errorf("stdio server: %w", err)
 		}
-	}()
-	log.Println("Serving on stdio")
+		return nil
+	}
 }
 
-func serveHTTP(mcpServer *server.MCPServer, addr string, ctx context.Context) {
+func serveHTTP(ctx context.Context, mcpServer *server.MCPServer, addr string) error {
 	streamable := server.NewStreamableHTTPServer(mcpServer)
 
-	// health is a shared handler for liveness/readiness probes. The process is
-	// considered healthy as soon as the HTTP listener is serving, so a plain
-	// 200 is sufficient and avoids tripping probes during Kubernetes startup.
+	// health is a shared handler for startup/liveness/readiness probes. The
+	// process is healthy as soon as the listener is serving, so a plain 200
+	// suffices and never trips probes during Kubernetes startup.
 	health := func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintln(w, "ok") //nolint:errcheck
+		_, _ = io.WriteString(w, "ok\n")
 	}
 
 	mux := http.NewServeMux()
@@ -139,21 +164,31 @@ func serveHTTP(mcpServer *server.MCPServer, addr string, ctx context.Context) {
 		Addr:    addr,
 		Handler: mux,
 		// ReadHeaderTimeout guards against slow-loris clients (gosec G114).
+		// No Read/WriteTimeout: MCP streamable HTTP uses long-lived SSE
+		// streams that fixed write deadlines would sever.
 		ReadHeaderTimeout: 10 * time.Second,
-		BaseContext: func(_ net.Listener) context.Context {
-			return ctx
-		},
+		IdleTimeout:       120 * time.Second,
+		BaseContext:       func(_ net.Listener) context.Context { return ctx },
 	}
 
+	errCh := make(chan error, 1)
 	go func() {
-		<-ctx.Done()
-		_ = srv.Shutdown(context.Background())
-	}()
-
-	go func() {
-		log.Printf("Serving on %s (streamable HTTP, healthz on /healthz)", addr)
-		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
-			log.Fatalf("HTTP server error: %v", err)
+		slog.Info("serving", "addr", addr, "transport", "streamable-http", "healthPath", "/healthz")
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
 		}
 	}()
+
+	select {
+	case err := <-errCh:
+		return fmt.Errorf("http server: %w", err)
+	case <-ctx.Done():
+		slog.Info("shutting down (signal received)")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("graceful shutdown: %w", err)
+		}
+		return nil
+	}
 }
