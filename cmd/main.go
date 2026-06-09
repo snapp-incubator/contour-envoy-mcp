@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -115,12 +117,33 @@ func serveStdio(mcpServer *server.MCPServer, ctx context.Context) {
 }
 
 func serveHTTP(mcpServer *server.MCPServer, addr string, ctx context.Context) {
-	httpServer := server.NewStreamableHTTPServer(mcpServer)
+	streamable := server.NewStreamableHTTPServer(mcpServer)
+
+	mux := http.NewServeMux()
+	mux.Handle("/mcp", streamable)
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprintln(w, "ok") //nolint:errcheck
+	})
+
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: mux,
+		BaseContext: func(_ net.Listener) context.Context {
+			return ctx
+		},
+	}
+
 	go func() {
-		if err := httpServer.Start(addr); err != nil {
+		<-ctx.Done()
+		_ = srv.Shutdown(context.Background())
+	}()
+
+	go func() {
+		log.Printf("Serving on %s (streamable HTTP, healthz on /healthz)", addr)
+		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 			log.Fatalf("HTTP server error: %v", err)
 		}
 	}()
-	log.Printf("Serving on %s (streamable HTTP)", addr)
-	<-ctx.Done()
 }
