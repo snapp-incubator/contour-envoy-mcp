@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/mark3labs/mcp-go/server"
 
@@ -119,17 +120,26 @@ func serveStdio(mcpServer *server.MCPServer, ctx context.Context) {
 func serveHTTP(mcpServer *server.MCPServer, addr string, ctx context.Context) {
 	streamable := server.NewStreamableHTTPServer(mcpServer)
 
+	// health is a shared handler for liveness/readiness probes. The process is
+	// considered healthy as soon as the HTTP listener is serving, so a plain
+	// 200 is sufficient and avoids tripping probes during Kubernetes startup.
+	health := func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, "ok") //nolint:errcheck
+	}
+
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", streamable)
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Header().Set("Content-Type", "text/plain")
-		fmt.Fprintln(w, "ok") //nolint:errcheck
-	})
+	mux.HandleFunc("/healthz", health)
+	mux.HandleFunc("/readyz", health)
+	mux.HandleFunc("/livez", health)
 
 	srv := &http.Server{
 		Addr:    addr,
 		Handler: mux,
+		// ReadHeaderTimeout guards against slow-loris clients (gosec G114).
+		ReadHeaderTimeout: 10 * time.Second,
 		BaseContext: func(_ net.Listener) context.Context {
 			return ctx
 		},
