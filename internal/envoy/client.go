@@ -167,11 +167,11 @@ func (c *AdminClient) getJSON(ctx context.Context, url string) (map[string]inter
 	if err != nil {
 		return nil, fmt.Errorf("executing request to %s: %w", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("Envoy admin API returned status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("envoy admin API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var result map[string]interface{}
@@ -191,7 +191,7 @@ func (c *AdminClient) getText(ctx context.Context, url string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("executing request to %s: %w", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -199,7 +199,7 @@ func (c *AdminClient) getText(ctx context.Context, url string) (string, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("Envoy admin API returned status %d: %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("envoy admin API returned status %d: %s", resp.StatusCode, string(body))
 	}
 	return string(body), nil
 }

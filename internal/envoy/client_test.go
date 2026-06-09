@@ -13,7 +13,7 @@ func TestAdminClient_GetServerInfo(t *testing.T) {
 			t.Errorf("expected /server_info, got %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"version":"1.30.0","state":"LIVE","uptime":"3600s"}`))
+		_, _ = w.Write([]byte(`{"version":"1.30.0","state":"LIVE","uptime":"3600s"}`))
 	}))
 	defer ts.Close()
 
@@ -36,7 +36,7 @@ func TestAdminClient_GetReady(t *testing.T) {
 		if r.URL.Path != "/ready" {
 			t.Errorf("expected /ready, got %s", r.URL.Path)
 		}
-		w.Write([]byte("LIVE"))
+		_, _ = w.Write([]byte("LIVE"))
 	}))
 	defer ts.Close()
 
@@ -51,8 +51,8 @@ func TestAdminClient_GetReady(t *testing.T) {
 }
 
 func TestAdminClient_GetStats(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("cluster.test_cluster.membership_total: 3\ntotal_requests: 1500\n"))
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("cluster.test_cluster.membership_total: 3\ntotal_requests: 1500\n"))
 	}))
 	defer ts.Close()
 
@@ -67,8 +67,8 @@ func TestAdminClient_GetStats(t *testing.T) {
 }
 
 func TestAdminClient_GetCerts(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("certificates: []"))
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("certificates: []"))
 	}))
 	defer ts.Close()
 
@@ -83,8 +83,8 @@ func TestAdminClient_GetCerts(t *testing.T) {
 }
 
 func TestAdminClient_GetClustersHealth(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("test_cluster::default_priority::max_connections::1024"))
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("test_cluster::default_priority::max_connections::1024"))
 	}))
 	defer ts.Close()
 
@@ -99,9 +99,9 @@ func TestAdminClient_GetClustersHealth(t *testing.T) {
 }
 
 func TestAdminClient_ConfigDump(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"configs": [], "version_info": "v1"}`))
+		_, _ = w.Write([]byte(`{"configs": [], "version_info": "v1"}`))
 	}))
 	defer ts.Close()
 
@@ -116,12 +116,11 @@ func TestAdminClient_ConfigDump(t *testing.T) {
 }
 
 func TestAdminClient_URLOverride(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"version":"override"}`))
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"version":"override"}`))
 	}))
 	defer ts.Close()
 
-	// Client has no base URL set
 	client := NewAdminClient("")
 	info, err := client.GetServerInfo(context.Background(), ts.URL)
 	if err != nil {
@@ -138,7 +137,7 @@ func TestAdminClient_StatsFiltered(t *testing.T) {
 		if filter != "cluster\\..*" {
 			t.Errorf("expected filter 'cluster\\..*', got %s", filter)
 		}
-		w.Write([]byte("cluster.test: 1"))
+		_, _ = w.Write([]byte("cluster.test: 1"))
 	}))
 	defer ts.Close()
 
@@ -153,9 +152,9 @@ func TestAdminClient_StatsFiltered(t *testing.T) {
 }
 
 func TestAdminClient_ErrorHandling(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("internal error"))
+		_, _ = w.Write([]byte("internal error"))
 	}))
 	defer ts.Close()
 
