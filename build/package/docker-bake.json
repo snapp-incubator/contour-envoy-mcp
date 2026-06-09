@@ -7,6 +7,9 @@
   "variable": {
     "TAG": {
       "default": "latest"
+    },
+    "SHA": {
+      "default": "dev"
     }
   },
   "target": {
@@ -15,7 +18,8 @@
       "context": ".",
       "platforms": ["linux/amd64", "linux/arm64"],
       "tags": [
-        "ghcr.io/snapp-incubator/contour-envoy-mcp:${TAG}"
+        "ghcr.io/snapp-incubator/contour-envoy-mcp:${TAG}",
+        "ghcr.io/snapp-incubator/contour-envoy-mcp:sha-${SHA}"
       ],
       "cache-from": [
         "type=gha,scope=contour-envoy-mcp"
