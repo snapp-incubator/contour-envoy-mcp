@@ -78,7 +78,10 @@ func run() error {
 	slog.Info("kubernetes client initialized")
 
 	contourClient := contour.NewClient(k8sClient.DynamicClient(), contourNs)
-	envoyClient := envoy.NewAdminClient(envoyAdminURL)
+	// k8sClient tunnels port-forwards to the localhost-bound Envoy admin
+	// listener and Contour debug server inside the pods.
+	contourClient.SetForwarder(k8sClient)
+	envoyClient := envoy.NewAdminClient(envoyAdminURL, k8sClient)
 	slog.Info("clients initialized", "contourNamespace", contourNs, "envoyAdminURL", envoyAdminURL)
 
 	mcpServer := server.NewMCPServer(
@@ -87,7 +90,7 @@ func run() error {
 		server.WithToolCapabilities(true),
 	)
 
-	registry := tools.NewRegistry(contourClient, envoyClient)
+	registry := tools.NewRegistry(contourClient, envoyClient, k8sClient, contourNs)
 	if err := registry.RegisterAll(mcpServer); err != nil {
 		return fmt.Errorf("register tools: %w", err)
 	}

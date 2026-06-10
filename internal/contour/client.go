@@ -44,8 +44,9 @@ var ServiceAPIGVR = schema.GroupVersionResource{
 
 // Client provides methods to query Contour CRDs.
 type Client struct {
-	dynamicClient  dynamic.Interface
-	defaultNS      string
+	dynamicClient dynamic.Interface
+	defaultNS     string
+	forwarder     PodForwarder
 }
 
 // NewClient creates a new Contour client.

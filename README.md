@@ -44,6 +44,41 @@ In OKD4 clusters where the default OpenShift router has been replaced with **Pro
 | `envoy_certs` | TLS certificate details and expiration |
 | `envoy_ready` | Envoy readiness check |
 | `envoy_runtime` | Envoy runtime configuration |
+| `envoy_memory` | Envoy memory allocation details |
+
+### Fleet Discovery & Contour Debug Tools
+| Tool | Description |
+|------|-------------|
+| `list_envoy_fleets` | List Envoy fleets (ingress classes) with pod readiness and resolved admin port |
+| `list_envoy_pods` | List Envoy pods, optionally filtered by fleet |
+| `get_contour_dag` | Contour's computed routing DAG (DOT format) from the debug server |
+
+## How Envoy admin access works
+
+Contour binds the Envoy admin interface to a unix socket and programs a
+read-only allowlist listener on `127.0.0.1:<adminPort>` inside each Envoy pod
+(`ContourConfiguration spec.envoy.network.adminPort`, default `9001`). That
+listener is intentionally not reachable over the pod network.
+
+This server reaches it with a Kubernetes **port-forward** tunnel
+(`pods/portforward`), which connects inside the pod's network namespace where
+localhost-bound ports are reachable. Every `envoy_*` tool accepts:
+
+- `fleet` — ingress class (e.g. `public`, `private`, `inter-dc`); a ready
+  Envoy pod of that fleet is picked automatically. The admin port is resolved
+  from the fleet's ContourConfiguration.
+- `pod` — a specific Envoy pod name (daemonset state differs per node).
+- `admin_port` — explicit admin port override.
+- `envoy_url` — direct admin URL, bypassing pod targeting (local debugging or
+  deployments that expose the admin endpoint on the network).
+
+Only the read-only allowlist endpoints are reachable through this path
+(`/config_dump`, `/clusters`, `/listeners`, `/certs`, `/memory`, `/ready`,
+`/runtime`, `/server_info`, `/stats`); mutating admin endpoints are blocked by
+Envoy itself.
+
+The Contour debug server (`/debug/dag`, also localhost-bound, default port
+`6060`) is reached the same way by `get_contour_dag`.
 
 ## Quick Start
 
@@ -285,6 +320,7 @@ rules:
   - httpproxies
   - tlscertificatedelegations
   - extensionservices
+  - contourconfigurations
   verbs: ["get", "list", "watch"]
 - apiGroups: ["gateway.networking.k8s.io"]
   resources:
@@ -299,6 +335,37 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: contour-envoy-mcp
+subjects:
+- kind: ServiceAccount
+  name: contour-envoy-mcp
+  namespace: projectcontour
+---
+# Namespaced: pod discovery + port-forward to the localhost-bound Envoy admin
+# listener and Contour debug server, scoped to the ingress namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: contour-envoy-mcp-portforward
+  namespace: projectcontour
+rules:
+- apiGroups: [""]
+  resources:
+  - pods
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources:
+  - pods/portforward
+  verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: contour-envoy-mcp-portforward
+  namespace: projectcontour
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: contour-envoy-mcp-portforward
 subjects:
 - kind: ServiceAccount
   name: contour-envoy-mcp

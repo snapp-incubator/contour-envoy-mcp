@@ -17,8 +17,8 @@ func TestAdminClient_GetServerInfo(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client := NewAdminClient(ts.URL)
-	info, err := client.GetServerInfo(context.Background(), "")
+	client := NewAdminClient(ts.URL, nil)
+	info, err := client.GetServerInfo(context.Background(), Target{})
 	if err != nil {
 		t.Fatalf("GetServerInfo failed: %v", err)
 	}
@@ -40,8 +40,8 @@ func TestAdminClient_GetReady(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client := NewAdminClient(ts.URL)
-	status, err := client.GetReady(context.Background(), "")
+	client := NewAdminClient(ts.URL, nil)
+	status, err := client.GetReady(context.Background(), Target{})
 	if err != nil {
 		t.Fatalf("GetReady failed: %v", err)
 	}
@@ -56,8 +56,8 @@ func TestAdminClient_GetStats(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client := NewAdminClient(ts.URL)
-	stats, err := client.GetStats(context.Background(), "")
+	client := NewAdminClient(ts.URL, nil)
+	stats, err := client.GetStats(context.Background(), Target{})
 	if err != nil {
 		t.Fatalf("GetStats failed: %v", err)
 	}
@@ -72,8 +72,8 @@ func TestAdminClient_GetCerts(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client := NewAdminClient(ts.URL)
-	certs, err := client.GetCerts(context.Background(), "")
+	client := NewAdminClient(ts.URL, nil)
+	certs, err := client.GetCerts(context.Background(), Target{})
 	if err != nil {
 		t.Fatalf("GetCerts failed: %v", err)
 	}
@@ -88,8 +88,8 @@ func TestAdminClient_GetClustersHealth(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client := NewAdminClient(ts.URL)
-	health, err := client.GetClustersHealth(context.Background(), "")
+	client := NewAdminClient(ts.URL, nil)
+	health, err := client.GetClustersHealth(context.Background(), Target{})
 	if err != nil {
 		t.Fatalf("GetClustersHealth failed: %v", err)
 	}
@@ -105,8 +105,8 @@ func TestAdminClient_ConfigDump(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client := NewAdminClient(ts.URL)
-	dump, err := client.GetConfigDump(context.Background(), "")
+	client := NewAdminClient(ts.URL, nil)
+	dump, err := client.GetConfigDump(context.Background(), Target{})
 	if err != nil {
 		t.Fatalf("GetConfigDump failed: %v", err)
 	}
@@ -121,8 +121,8 @@ func TestAdminClient_URLOverride(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client := NewAdminClient("")
-	info, err := client.GetServerInfo(context.Background(), ts.URL)
+	client := NewAdminClient("", nil)
+	info, err := client.GetServerInfo(context.Background(), Target{URL: ts.URL})
 	if err != nil {
 		t.Fatalf("GetServerInfo with override failed: %v", err)
 	}
@@ -141,13 +141,29 @@ func TestAdminClient_StatsFiltered(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client := NewAdminClient(ts.URL)
-	stats, err := client.GetStatsFiltered(context.Background(), "", `cluster\..*`)
+	client := NewAdminClient(ts.URL, nil)
+	stats, err := client.GetStatsFiltered(context.Background(), Target{}, `cluster\..*`)
 	if err != nil {
 		t.Fatalf("GetStatsFiltered failed: %v", err)
 	}
 	if stats == "" {
 		t.Error("expected non-empty filtered stats")
+	}
+}
+
+func TestAdminClient_NoTarget(t *testing.T) {
+	client := NewAdminClient("", nil)
+	_, err := client.GetServerInfo(context.Background(), Target{})
+	if err == nil {
+		t.Error("expected error when no target is configured")
+	}
+}
+
+func TestAdminClient_PodTargetWithoutForwarder(t *testing.T) {
+	client := NewAdminClient("", nil)
+	_, err := client.GetServerInfo(context.Background(), Target{Namespace: "ns", Pod: "envoy-abc", Port: 9001})
+	if err == nil {
+		t.Error("expected error for pod target without forwarder")
 	}
 }
 
@@ -158,8 +174,8 @@ func TestAdminClient_ErrorHandling(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client := NewAdminClient(ts.URL)
-	_, err := client.GetServerInfo(context.Background(), "")
+	client := NewAdminClient(ts.URL, nil)
+	_, err := client.GetServerInfo(context.Background(), Target{})
 	if err == nil {
 		t.Error("expected error for 500 response")
 	}

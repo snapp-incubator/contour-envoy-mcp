@@ -1,10 +1,18 @@
 // Package envoy provides a client for querying the Envoy admin API
 // (config_dump, stats, clusters, listeners, routes, certs, server_info).
+//
+// In Contour deployments the Envoy admin interface is bound to a unix socket,
+// with a read-only allowlist listener on 127.0.0.1:<adminPort> programmed by
+// Contour inside each Envoy pod. That listener is not reachable over the pod
+// network, so this client reaches it through a Kubernetes port-forward tunnel
+// (see PodForwarder). A direct URL mode is kept for local debugging and for
+// deployments that expose the admin endpoint on the network.
 package envoy
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,48 +20,99 @@ import (
 	"time"
 )
 
+// PodForwarder opens a tunnel to a localhost-bound port inside a pod and
+// returns a locally reachable base URL plus a close function.
+type PodForwarder interface {
+	ForwardPod(ctx context.Context, namespace, pod string, port int) (baseURL string, close func(), err error)
+}
+
+// Target identifies which Envoy admin endpoint a call should hit.
+// Resolution order: URL (direct) > Pod (port-forward) > client default URL.
+type Target struct {
+	// URL is a direct admin base URL (e.g. http://127.0.0.1:9001). Wins when set.
+	URL string
+	// Namespace/Pod/Port select a pod whose localhost admin listener is
+	// reached via port-forward.
+	Namespace string
+	Pod       string
+	Port      int
+}
+
 // AdminClient communicates with the Envoy admin interface.
 type AdminClient struct {
 	baseURL    string
+	forwarder  PodForwarder
 	httpClient *http.Client
 }
 
-// NewAdminClient creates a new Envoy admin API client.
-// baseURL is the scheme+host+port of the Envoy admin endpoint (e.g. http://envoy.projectcontour:9001).
-// If empty, each tool call must provide the URL explicitly.
-func NewAdminClient(baseURL string) *AdminClient {
+// NewAdminClient creates a new Envoy admin API client. baseURL is an optional
+// default direct admin URL; forwarder enables pod targets and may be nil.
+func NewAdminClient(baseURL string, forwarder PodForwarder) *AdminClient {
 	return &AdminClient{
-		baseURL: strings.TrimRight(baseURL, "/"),
+		baseURL:   strings.TrimRight(baseURL, "/"),
+		forwarder: forwarder,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 	}
 }
 
-// resolveURL returns the admin API URL, preferring the per-call override.
-func (c *AdminClient) resolveURL(override string) string {
-	if override != "" {
-		return strings.TrimRight(override, "/")
+// ErrNoTarget is returned when a call has no way to reach an Envoy admin API.
+var ErrNoTarget = errors.New("no Envoy target: pass 'fleet' or 'pod' (cluster mode), 'envoy_url' (direct mode), or start the server with -envoy-admin-url")
+
+func noop() {}
+
+// resolve returns the base URL to use for a call and a cleanup function that
+// must be called when the request is done (it closes the port-forward tunnel,
+// if one was opened).
+func (c *AdminClient) resolve(ctx context.Context, t Target) (string, func(), error) {
+	if t.URL != "" {
+		return strings.TrimRight(t.URL, "/"), noop, nil
 	}
-	return c.baseURL
+	if t.Pod != "" {
+		if c.forwarder == nil {
+			return "", nil, fmt.Errorf("pod target %s/%s requested but no Kubernetes port-forwarder is configured", t.Namespace, t.Pod)
+		}
+		return c.forwarder.ForwardPod(ctx, t.Namespace, t.Pod, t.Port)
+	}
+	if c.baseURL != "" {
+		return c.baseURL, noop, nil
+	}
+	return "", nil, ErrNoTarget
+}
+
+func (c *AdminClient) targetJSON(ctx context.Context, t Target, path string) (map[string]interface{}, error) {
+	base, done, err := c.resolve(ctx, t)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	return c.getJSON(ctx, base+path)
+}
+
+func (c *AdminClient) targetText(ctx context.Context, t Target, path string) (string, error) {
+	base, done, err := c.resolve(ctx, t)
+	if err != nil {
+		return "", err
+	}
+	defer done()
+	return c.getText(ctx, base+path)
 }
 
 // GetConfigDump retrieves the full Envoy configuration dump.
-func (c *AdminClient) GetConfigDump(ctx context.Context, urlOverride string) (map[string]interface{}, error) {
-	url := c.resolveURL(urlOverride) + "/config_dump"
-	return c.getJSON(ctx, url)
+func (c *AdminClient) GetConfigDump(ctx context.Context, t Target) (map[string]interface{}, error) {
+	return c.targetJSON(ctx, t, "/config_dump")
 }
 
 // GetConfigDumpFiltered retrieves a filtered config dump for a specific type.
 // resourceTypes can be: "listener", "route", "cluster", "endpoint", "secret", "scoped_route".
-func (c *AdminClient) GetConfigDumpFiltered(ctx context.Context, urlOverride, resourceType string) (map[string]interface{}, error) {
-	url := fmt.Sprintf("%s/config_dump?resource_type=%s", c.resolveURL(urlOverride), resourceType)
-	return c.getJSON(ctx, url)
+func (c *AdminClient) GetConfigDumpFiltered(ctx context.Context, t Target, resourceType string) (map[string]interface{}, error) {
+	return c.targetJSON(ctx, t, fmt.Sprintf("/config_dump?resource_type=%s", resourceType))
 }
 
 // GetListeners returns Envoy listener configuration.
-func (c *AdminClient) GetListeners(ctx context.Context, urlOverride string) ([]interface{}, error) {
-	dump, err := c.GetConfigDumpFiltered(ctx, urlOverride, "listener")
+func (c *AdminClient) GetListeners(ctx context.Context, t Target) ([]interface{}, error) {
+	dump, err := c.GetConfigDumpFiltered(ctx, t, "listener")
 	if err != nil {
 		return nil, err
 	}
@@ -62,8 +121,8 @@ func (c *AdminClient) GetListeners(ctx context.Context, urlOverride string) ([]i
 }
 
 // GetRoutes returns Envoy route configuration.
-func (c *AdminClient) GetRoutes(ctx context.Context, urlOverride string) ([]interface{}, error) {
-	dump, err := c.GetConfigDumpFiltered(ctx, urlOverride, "route")
+func (c *AdminClient) GetRoutes(ctx context.Context, t Target) ([]interface{}, error) {
+	dump, err := c.GetConfigDumpFiltered(ctx, t, "route")
 	if err != nil {
 		return nil, err
 	}
@@ -72,8 +131,8 @@ func (c *AdminClient) GetRoutes(ctx context.Context, urlOverride string) ([]inte
 }
 
 // GetClusters returns Envoy cluster configuration.
-func (c *AdminClient) GetClusters(ctx context.Context, urlOverride string) ([]interface{}, error) {
-	dump, err := c.GetConfigDumpFiltered(ctx, urlOverride, "cluster")
+func (c *AdminClient) GetClusters(ctx context.Context, t Target) ([]interface{}, error) {
+	dump, err := c.GetConfigDumpFiltered(ctx, t, "cluster")
 	if err != nil {
 		return nil, err
 	}
@@ -82,8 +141,8 @@ func (c *AdminClient) GetClusters(ctx context.Context, urlOverride string) ([]in
 }
 
 // GetEndpoints returns Envoy endpoint configuration.
-func (c *AdminClient) GetEndpoints(ctx context.Context, urlOverride string) ([]interface{}, error) {
-	dump, err := c.GetConfigDumpFiltered(ctx, urlOverride, "endpoint")
+func (c *AdminClient) GetEndpoints(ctx context.Context, t Target) ([]interface{}, error) {
+	dump, err := c.GetConfigDumpFiltered(ctx, t, "endpoint")
 	if err != nil {
 		return nil, err
 	}
@@ -92,8 +151,8 @@ func (c *AdminClient) GetEndpoints(ctx context.Context, urlOverride string) ([]i
 }
 
 // GetSecrets returns Envoy secret/TLS configuration.
-func (c *AdminClient) GetSecrets(ctx context.Context, urlOverride string) ([]interface{}, error) {
-	dump, err := c.GetConfigDumpFiltered(ctx, urlOverride, "secret")
+func (c *AdminClient) GetSecrets(ctx context.Context, t Target) ([]interface{}, error) {
+	dump, err := c.GetConfigDumpFiltered(ctx, t, "secret")
 	if err != nil {
 		return nil, err
 	}
@@ -102,57 +161,53 @@ func (c *AdminClient) GetSecrets(ctx context.Context, urlOverride string) ([]int
 }
 
 // GetStats returns Envoy server statistics.
-func (c *AdminClient) GetStats(ctx context.Context, urlOverride string) (string, error) {
-	url := c.resolveURL(urlOverride) + "/stats"
-	return c.getText(ctx, url)
+func (c *AdminClient) GetStats(ctx context.Context, t Target) (string, error) {
+	return c.targetText(ctx, t, "/stats")
 }
 
 // GetStatsFormat returns Envoy stats in a specific format (text, json, html, prometheus).
-func (c *AdminClient) GetStatsFormat(ctx context.Context, urlOverride, format string) (string, error) {
-	url := fmt.Sprintf("%s/stats?format=%s", c.resolveURL(urlOverride), format)
-	return c.getText(ctx, url)
+func (c *AdminClient) GetStatsFormat(ctx context.Context, t Target, format string) (string, error) {
+	return c.targetText(ctx, t, fmt.Sprintf("/stats?format=%s", format))
 }
 
 // GetStatsFiltered returns Envoy stats filtered by a pattern.
-func (c *AdminClient) GetStatsFiltered(ctx context.Context, urlOverride, filter string) (string, error) {
-	url := fmt.Sprintf("%s/stats?filter=%s", c.resolveURL(urlOverride), filter)
-	return c.getText(ctx, url)
+func (c *AdminClient) GetStatsFiltered(ctx context.Context, t Target, filter string) (string, error) {
+	return c.targetText(ctx, t, fmt.Sprintf("/stats?filter=%s", filter))
 }
 
 // GetClustersHealth returns cluster health information from the Envoy admin API.
-func (c *AdminClient) GetClustersHealth(ctx context.Context, urlOverride string) (string, error) {
-	url := c.resolveURL(urlOverride) + "/clusters"
-	return c.getText(ctx, url)
+func (c *AdminClient) GetClustersHealth(ctx context.Context, t Target) (string, error) {
+	return c.targetText(ctx, t, "/clusters")
 }
 
 // GetServerInfo returns Envoy server information.
-func (c *AdminClient) GetServerInfo(ctx context.Context, urlOverride string) (map[string]interface{}, error) {
-	url := c.resolveURL(urlOverride) + "/server_info"
-	return c.getJSON(ctx, url)
+func (c *AdminClient) GetServerInfo(ctx context.Context, t Target) (map[string]interface{}, error) {
+	return c.targetJSON(ctx, t, "/server_info")
 }
 
 // GetCerts returns TLS certificate information from Envoy.
-func (c *AdminClient) GetCerts(ctx context.Context, urlOverride string) (string, error) {
-	url := c.resolveURL(urlOverride) + "/certs"
-	return c.getText(ctx, url)
+func (c *AdminClient) GetCerts(ctx context.Context, t Target) (string, error) {
+	return c.targetText(ctx, t, "/certs")
 }
 
 // GetReady returns Envoy readiness status.
-func (c *AdminClient) GetReady(ctx context.Context, urlOverride string) (string, error) {
-	url := c.resolveURL(urlOverride) + "/ready"
-	return c.getText(ctx, url)
+func (c *AdminClient) GetReady(ctx context.Context, t Target) (string, error) {
+	return c.targetText(ctx, t, "/ready")
 }
 
 // GetRuntime returns Envoy runtime configuration.
-func (c *AdminClient) GetRuntime(ctx context.Context, urlOverride string) (map[string]interface{}, error) {
-	url := c.resolveURL(urlOverride) + "/runtime"
-	return c.getJSON(ctx, url)
+func (c *AdminClient) GetRuntime(ctx context.Context, t Target) (map[string]interface{}, error) {
+	return c.targetJSON(ctx, t, "/runtime")
 }
 
 // GetStatsAsJSON returns Envoy stats in JSON format.
-func (c *AdminClient) GetStatsAsJSON(ctx context.Context, urlOverride string) (map[string]interface{}, error) {
-	url := fmt.Sprintf("%s/stats?format=json", c.resolveURL(urlOverride))
-	return c.getJSON(ctx, url)
+func (c *AdminClient) GetStatsAsJSON(ctx context.Context, t Target) (map[string]interface{}, error) {
+	return c.targetJSON(ctx, t, "/stats?format=json")
+}
+
+// GetMemory returns Envoy memory allocation details.
+func (c *AdminClient) GetMemory(ctx context.Context, t Target) (map[string]interface{}, error) {
+	return c.targetJSON(ctx, t, "/memory")
 }
 
 // --- HTTP helpers ---
