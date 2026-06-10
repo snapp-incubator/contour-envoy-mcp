@@ -43,6 +43,7 @@ func run() error {
 		kubeconfig    string
 		kubeContext   string
 		envoyAdminURL string
+		defaultFleet  string
 		contourNs     string
 		logLevel      string
 		showVersion   bool
@@ -52,7 +53,8 @@ func run() error {
 	flag.StringVar(&addr, "addr", ":8080", "Listen address for HTTP transport")
 	flag.StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (defaults to in-cluster config)")
 	flag.StringVar(&kubeContext, "context", "", "Kubernetes context to use from kubeconfig")
-	flag.StringVar(&envoyAdminURL, "envoy-admin-url", "", "Envoy admin API base URL (e.g. http://envoy.projectcontour:9001)")
+	flag.StringVar(&envoyAdminURL, "envoy-admin-url", "", "Direct Envoy admin API base URL (advanced; the admin listener is normally localhost-bound and reached via port-forward)")
+	flag.StringVar(&defaultFleet, "default-fleet", "", "Default Envoy fleet (ingress class) targeted when a tool call passes no fleet/pod/envoy_url (e.g. public)")
 	flag.StringVar(&contourNs, "contour-namespace", "projectcontour", "Default namespace for Contour resources")
 	flag.StringVar(&logLevel, "log-level", "info", "Log level: debug, info, warn, error")
 	flag.BoolVar(&showVersion, "version", false, "Print version and exit")
@@ -82,7 +84,7 @@ func run() error {
 	// listener and Contour debug server inside the pods.
 	contourClient.SetForwarder(k8sClient)
 	envoyClient := envoy.NewAdminClient(envoyAdminURL, k8sClient)
-	slog.Info("clients initialized", "contourNamespace", contourNs, "envoyAdminURL", envoyAdminURL)
+	slog.Info("clients initialized", "contourNamespace", contourNs, "envoyAdminURL", envoyAdminURL, "defaultFleet", defaultFleet)
 
 	mcpServer := server.NewMCPServer(
 		"contour-envoy-mcp",
@@ -91,6 +93,7 @@ func run() error {
 	)
 
 	registry := tools.NewRegistry(contourClient, envoyClient, k8sClient, contourNs)
+	registry.SetDefaultFleet(defaultFleet)
 	if err := registry.RegisterAll(mcpServer); err != nil {
 		return fmt.Errorf("register tools: %w", err)
 	}

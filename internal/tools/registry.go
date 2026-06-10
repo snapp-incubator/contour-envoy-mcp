@@ -38,7 +38,14 @@ type Registry struct {
 	envoyClient   *envoy.AdminClient
 	pods          PodLister
 	ingressNS     string
+	defaultFleet  string
 	toolCount     int
+}
+
+// SetDefaultFleet sets the fleet targeted when an envoy_* tool call passes no
+// fleet, pod, or envoy_url.
+func (r *Registry) SetDefaultFleet(fleet string) {
+	r.defaultFleet = fleet
 }
 
 // NewRegistry creates a new tool registry with the given clients.
@@ -462,8 +469,9 @@ func (r *Registry) RegisterAll(s *server.MCPServer) error {
 
 // envoyTarget builds the Envoy admin target for a tool call from its
 // envoy_url / fleet / pod / admin_port arguments. Resolution order:
-// envoy_url (direct) > pod > fleet (first ready pod). With none set, an empty
-// target is returned and the client falls back to its default URL, if any.
+// envoy_url (direct) > pod > fleet (first ready pod) > server default fleet.
+// With none set, an empty target is returned and the client falls back to its
+// default URL, if any.
 func (r *Registry) envoyTarget(ctx context.Context, req mcp.CallToolRequest) (envoy.Target, error) {
 	if url := reqString(req, "envoy_url"); url != "" {
 		return envoy.Target{URL: url}, nil
@@ -472,7 +480,10 @@ func (r *Registry) envoyTarget(ctx context.Context, req mcp.CallToolRequest) (en
 	fleet := reqString(req, "fleet")
 	pod := reqString(req, "pod")
 	if fleet == "" && pod == "" {
-		return envoy.Target{}, nil
+		fleet = r.defaultFleet
+		if fleet == "" {
+			return envoy.Target{}, nil
+		}
 	}
 	if r.pods == nil {
 		return envoy.Target{}, fmt.Errorf("fleet/pod targeting requires Kubernetes access")

@@ -97,8 +97,12 @@ make build
 # Or specify kubeconfig
 ./bin/contour-envoy-mcp -kubeconfig ~/.kube/config
 
-# With Envoy admin access
-./bin/contour-envoy-mcp -envoy-admin-url http://envoy.projectcontour:9001
+# With a default Envoy fleet (envoy_* tools work without a 'fleet' argument)
+./bin/contour-envoy-mcp -default-fleet public
+
+# With a direct Envoy admin URL (advanced; only if the admin endpoint is
+# network-reachable, e.g. local envoy or a custom socat sidecar)
+./bin/contour-envoy-mcp -envoy-admin-url http://127.0.0.1:9001
 ```
 
 ### Run with HTTP transport
@@ -124,8 +128,9 @@ docker run -i contour-envoy-mcp
 | `-addr` | `:8080` | Listen address for HTTP transport |
 | `-kubeconfig` | (auto) | Path to kubeconfig file |
 | `-context` | (current) | Kubernetes context to use |
-| `-envoy-admin-url` | (none) | Envoy admin API base URL |
-| `-contour-namespace` | `projectcontour` | Default namespace for Contour resources |
+| `-default-fleet` | (none) | Default Envoy fleet (ingress class) when a tool call passes no fleet/pod/envoy_url |
+| `-envoy-admin-url` | (none) | Direct Envoy admin API base URL (advanced; normally unused — admin is reached via port-forward) |
+| `-contour-namespace` | `projectcontour` | Namespace where the Contour/Envoy fleets run |
 | `-version` | | Print version and exit |
 
 ### Environment Variables
@@ -145,7 +150,7 @@ Add to your MCP client configuration:
   "mcpServers": {
     "contour-envoy": {
       "command": "contour-envoy-mcp",
-      "args": ["-kubeconfig", "/path/to/kubeconfig", "-envoy-admin-url", "http://envoy.projectcontour:9001"]
+      "args": ["-kubeconfig", "/path/to/kubeconfig", "-contour-namespace", "projectcontour", "-default-fleet", "public"]
     }
   }
 }
@@ -256,7 +261,7 @@ spec:
         args:
         - -transport=stdio
         - -contour-namespace=projectcontour
-        - -envoy-admin-url=http://envoy.projectcontour:9001
+        - -default-fleet=public
 ```
 
 ### As a Deployment with HTTP transport
