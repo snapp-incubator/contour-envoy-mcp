@@ -1,25 +1,36 @@
 ---
 name: contour-envoy-mcp
-description: Diagnose Contour/Envoy ingress in OKD4/OpenShift clusters using the contour-envoy MCP server tools. Use when investigating HTTPProxy errors, routing failures, TLS/cert problems, upstream health, or cross-referencing Contour config against live Envoy state. Triggers - "why is my route 404/503", "HTTPProxy invalid", "check ingress", "envoy clusters unhealthy", "cert expiring", "fqdn not resolving".
+description: Diagnose Contour/Envoy ingress in OKD4/OpenShift clusters using the contour-envoy MCP server tools. Use when investigating route errors, routing failures, TLS/cert problems, upstream health, or cross-referencing Contour config against live Envoy state. Triggers - "why is my route 404/503", "route invalid", "check ingress", "envoy clusters unhealthy", "cert expiring", "fqdn not resolving", "which class serves this".
 ---
 
 # Contour-Envoy Ingress Diagnostics
 
-This MCP server exposes 21 read-only tools for querying **Contour HTTPProxy** CRDs and live **Envoy** admin-API state in clusters where Contour replaces the OpenShift router. Use it to map declared config (Contour) against runtime reality (Envoy).
+This MCP server exposes 24 read-only tools for querying **Contour HTTPProxy** CRDs and live **Envoy** admin-API state in clusters where Contour replaces the OpenShift router. Use it to map declared config (Contour) against runtime reality (Envoy).
+
+## Terminology (our words → tool words)
+
+Our team's terms differ from Contour/Envoy upstream naming. The MCP tool names use the upstream words; map them:
+
+| We say | Tool/upstream word | Notes |
+|--------|--------------------|-------|
+| **route** | HTTPProxy | The CRD. `list_httpproxies` lists routes, `get_httpproxy` gets one route, `list_invalid_httpproxies` = invalid routes, etc. |
+| **class** / **ingressClass** | fleet / ingress class | The Envoy fleet. The `fleet` tool param takes a class name (`public`, `private`, `inter-dc`, `inter-venture`, `ode-private`). `list_envoy_fleets` lists classes. |
+
+When the user says "route", they mean an HTTPProxy — use the `*_httpproxy*` tools. When they say "class" or "ingressClass", pass it as the `fleet` param.
 
 ## Tool map
 
-**Contour HTTPProxy** (Kubernetes CRD reads):
+**Routes (Contour HTTPProxy CRD reads):**
 | Tool | Params | Use |
 |------|--------|-----|
-| `list_httpproxies` | `namespace?` | Inventory: name, ns, FQDN, status |
-| `get_httpproxy` | `name*`, `namespace*` | Full spec of one proxy |
-| `get_httpproxy_status` | `name*`, `namespace*` | Valid? conditions + error detail |
-| `get_httpproxy_routes` | `name*`, `namespace*` | Path matches, services, weights |
-| `get_httpproxy_tree` | `name*`, `namespace*` | Root + included child proxies (delegation chain) |
-| `search_httpproxy_by_fqdn` | `fqdn*` | Which proxy owns a domain (wildcard ok) |
-| `search_httpproxy_by_backend` | `service_name*`, `namespace?` | Which proxies route to a Service |
-| `list_invalid_httpproxies` | — | All non-Valid proxies (fast triage) |
+| `list_httpproxies` | `namespace?` | Inventory of routes: name, ns, FQDN, status |
+| `get_httpproxy` | `name*`, `namespace*` | Full spec of one route |
+| `get_httpproxy_status` | `name*`, `namespace*` | Route Valid? conditions + error detail |
+| `get_httpproxy_routes` | `name*`, `namespace*` | Path matches, services, weights of a route |
+| `get_httpproxy_tree` | `name*`, `namespace*` | Root + included child routes (delegation chain) |
+| `search_httpproxy_by_fqdn` | `fqdn*` | Which route owns a domain (wildcard ok) |
+| `search_httpproxy_by_backend` | `service_name*`, `namespace?` | Which routes point to a Service |
+| `list_invalid_httpproxies` | — | All non-Valid routes (fast triage) |
 
 **Contour TLS / extensions:**
 | Tool | Params | Use |
@@ -27,14 +38,14 @@ This MCP server exposes 21 read-only tools for querying **Contour HTTPProxy** CR
 | `list_tls_cert_delegations` | `namespace?` | Which TLS secrets delegated where |
 | `list_extension_services` | `namespace?` | Rate-limit/tracing extensions |
 
-**Fleet discovery & Contour debug:**
+**Class discovery & Contour debug:**
 | Tool | Params | Use |
 |------|--------|-----|
-| `list_envoy_fleets` | — | Fleets (ingress classes) + pod readiness + admin port. Call first. |
-| `list_envoy_pods` | `fleet?` | Envoy pods: name, node, IP, ready |
-| `get_contour_dag` | `fleet*`, `pod?` | Contour's computed routing DAG (DOT) — authoritative view of interpreted config |
+| `list_envoy_fleets` | — | Classes (ingress classes) + pod readiness + admin port. Call first. |
+| `list_envoy_pods` | `fleet?` (class) | Envoy pods: name, node, IP, ready |
+| `get_contour_dag` | `fleet*` (class), `pod?` | Contour's computed routing DAG (DOT) — authoritative view of interpreted config |
 
-**Envoy admin API** (live data plane). All take `fleet?`, `pod?`, `admin_port?`, `envoy_url?`:
+**Envoy admin API** (live data plane). All take `fleet?` (class), `pod?`, `admin_port?`, `envoy_url?`:
 | Tool | Extra params | Use |
 |------|--------------|-----|
 | `envoy_config_dump` | `resource_type?` (listener/route/cluster/endpoint/secret/scoped_route) | Full or filtered config |
@@ -52,43 +63,43 @@ This MCP server exposes 21 read-only tools for querying **Contour HTTPProxy** CR
 
 `*` = required. `?` = optional.
 
-## Targeting envoy fleets
+## Targeting a class
 
-Multiple Envoy fleets run per cluster (`public`, `private`, `inter-dc`, `inter-venture`, `ode-private`), one daemonset/deployment each in the ingress namespace. Pass `fleet` to any `envoy_*` tool: the server picks a ready Envoy pod of that fleet and tunnels (K8s port-forward) to the read-only admin listener Contour programs on `127.0.0.1:<adminPort>` inside the pod. Pass `pod` to inspect a specific node's daemonset instance. `envoy_url` bypasses targeting (local debugging only). Start with `list_envoy_fleets` to see valid names and ports.
+Multiple Envoy classes run per cluster (`public`, `private`, `inter-dc`, `inter-venture`, `ode-private`), one daemonset/deployment each in the ingress namespace. The `fleet` tool param is the class name. Pass `fleet` to any `envoy_*` tool: the server picks a ready Envoy pod of that class and tunnels (K8s port-forward) to the read-only admin listener Contour programs on `127.0.0.1:<adminPort>` inside the pod. Pass `pod` to inspect a specific node's daemonset instance. `envoy_url` bypasses targeting (local debugging only). Start with `list_envoy_fleets` to see valid class names and ports.
 
 ## Diagnostic playbooks
 
 ### Route returns 404 / not found
-1. `search_httpproxy_by_fqdn` with the host → confirm a proxy claims it.
-2. If none → no Contour config for that domain. Done.
+1. `search_httpproxy_by_fqdn` with the host → confirm a route claims it.
+2. If none → no route for that domain. Done.
 3. If found but unexpected → `get_httpproxy_routes` → check path match.
-4. Confirm Envoy programmed it: `envoy_routes`, grep virtual host = FQDN.
-   - In Contour but not in Envoy → proxy likely Invalid. Go to status check.
+4. Confirm Envoy programmed it: `envoy_routes` (pass the class as `fleet`), grep virtual host = FQDN.
+   - Route exists but missing in Envoy → route likely Invalid. Go to status check.
 
 ### Route returns 503 / upstream failure
-1. `search_httpproxy_by_fqdn` → get the owning proxy + namespace.
+1. `search_httpproxy_by_fqdn` → get the owning route + namespace.
 2. `get_httpproxy_routes` → identify backend service(s).
-3. `envoy_clusters_health` → is the target cluster's membership 0 / all unhealthy?
+3. `envoy_clusters_health` (pass the class as `fleet`) → is the target cluster's membership 0 / all unhealthy?
 4. `envoy_endpoints` → are there any healthy backend hosts?
 5. Empty endpoints = no ready pods / wrong service selector. Healthy but still 503 = check `envoy_stats` filter `cluster\.<name>\..*` for `upstream_rq_5xx`, circuit breaker, timeouts.
 
-### HTTPProxy shows Invalid
-1. `list_invalid_httpproxies` → triage all broken proxies at once.
+### Route shows Invalid
+1. `list_invalid_httpproxies` → triage all broken routes at once.
 2. `get_httpproxy_status` on the target → read conditions for exact error.
 3. If error is delegation/include related → `get_httpproxy_tree` to inspect the chain.
-4. Common: orphaned include, missing TLS secret, FQDN conflict with another root.
+4. Common: orphaned include, missing TLS secret, FQDN conflict with another root route.
 
 ### TLS / certificate problems
-1. `envoy_certs` → check expiry + which cert is served for the SNI.
-2. Cert missing/wrong → `list_tls_cert_delegations` to verify the secret is delegated to the proxy's namespace.
+1. `envoy_certs` (pass the class as `fleet`) → check expiry + which cert is served for the SNI.
+2. Cert missing/wrong → `list_tls_cert_delegations` to verify the secret is delegated to the route's namespace.
 3. `get_httpproxy` → confirm `spec.virtualhost.tls.secretName` matches.
 
 ### Config drift (Contour says X, traffic does Y)
-Cross-reference is the core value: compare declared (`get_httpproxy*`) against live (`envoy_*`). If Contour is Valid but Envoy lacks the route/cluster, suspect xDS sync lag or a Contour-internal reject — check `envoy_server_info` state and Contour pod logs.
+Cross-reference is the core value: compare declared (route, `get_httpproxy*`) against live (`envoy_*`). If the route is Valid but Envoy lacks the route/cluster, suspect xDS sync lag or a Contour-internal reject — check `envoy_server_info` state and Contour pod logs. `get_contour_dag` (pass the class as `fleet`) shows what Contour actually computed.
 
 ## Notes
-- Envoy tools need a target: pass `fleet` (preferred) or `pod`. `envoy_url` / `-envoy-admin-url` is a direct-mode fallback.
-- For routing discrepancies (Contour Valid but Envoy disagrees), `get_contour_dag` shows what Contour actually computed — compare against `envoy_routes`.
+- Envoy tools need a target: pass `fleet` (the class, preferred) or `pod`. `envoy_url` / `-envoy-admin-url` is a direct-mode fallback. With no target, the server's default class is used (if configured).
+- For routing discrepancies (route Valid but Envoy disagrees), `get_contour_dag` shows what Contour actually computed — compare against `envoy_routes`.
 - Ingress namespace comes from server flag `-contour-namespace` (snappcloud: `snappcloud-ingress`).
 - All tools are read-only — safe to call freely. No mutation, no traffic impact.
-- Start broad (`list_*`, `search_*`), then drill into one proxy. Avoid `envoy_config_dump` with no `resource_type` unless you truly need everything — it is large.
+- Start broad (`list_*`, `search_*`), then drill into one route. Avoid `envoy_config_dump` with no `resource_type` unless you truly need everything — it is large.
