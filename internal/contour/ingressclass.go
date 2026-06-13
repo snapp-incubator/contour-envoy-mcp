@@ -14,7 +14,7 @@ import (
 )
 
 // ContourConfigurationGVR is the GVR for Contour's ContourConfiguration CRD,
-// which holds per-fleet settings like the Envoy admin port and debug server.
+// which holds per-ingress-class settings like the Envoy admin port and debug server.
 var ContourConfigurationGVR = schema.GroupVersionResource{
 	Group:    "projectcontour.io",
 	Version:  "v1alpha1",
@@ -49,25 +49,25 @@ func (c *Client) ListContourConfigurations(ctx context.Context) ([]map[string]in
 	return extractItems(list.Items), nil
 }
 
-// FleetPorts holds the per-fleet ports resolved from a ContourConfiguration.
-type FleetPorts struct {
+// IngressClassPorts holds the per-ingress-class ports resolved from a ContourConfiguration.
+type IngressClassPorts struct {
 	AdminPort int `json:"adminPort"`
 	DebugPort int `json:"debugPort"`
 }
 
-// PortsForFleet resolves the Envoy admin port and Contour debug port for a
-// fleet (ingress class, e.g. "public", "private", "inter-dc") by reading the
-// fleet's ContourConfiguration. Falls back to Contour defaults when the
+// PortsForIngressClass resolves the Envoy admin port and Contour debug port for a
+// an ingress class ( e.g. "public", "private", "inter-dc") by reading the
+// ContourConfiguration. Falls back to Contour defaults when the
 // configuration cannot be found or does not set the fields.
-func (c *Client) PortsForFleet(ctx context.Context, fleet string) (FleetPorts, error) {
-	ports := FleetPorts{AdminPort: DefaultEnvoyAdminPort, DebugPort: DefaultDebugPort}
+func (c *Client) PortsForIngressClass(ctx context.Context, ingressClass string) (IngressClassPorts, error) {
+	ports := IngressClassPorts{AdminPort: DefaultEnvoyAdminPort, DebugPort: DefaultDebugPort}
 
 	configs, err := c.ListContourConfigurations(ctx)
 	if err != nil {
 		return ports, err
 	}
 
-	cfg := matchFleetConfig(configs, fleet)
+	cfg := matchIngressClassConfig(configs, ingressClass)
 	if cfg == nil {
 		return ports, nil
 	}
@@ -81,19 +81,19 @@ func (c *Client) PortsForFleet(ctx context.Context, fleet string) (FleetPorts, e
 	return ports, nil
 }
 
-// matchFleetConfig finds the ContourConfiguration belonging to a fleet.
-// Prefers the exact conventional name (contour-<fleet>-configuration) so that
-// e.g. fleet "private" does not match "contour-ode-private-configuration",
+// matchIngressClassConfig finds the ContourConfiguration belonging to an ingress class.
+// Prefers the exact conventional name (contour-<ingress-class>-configuration) so that
+// e.g. ingress class "private" does not match "contour-ode-private-configuration",
 // then falls back to a word-boundary substring match.
-func matchFleetConfig(configs []map[string]interface{}, fleet string) map[string]interface{} {
-	exact := fmt.Sprintf("contour-%s-configuration", fleet)
+func matchIngressClassConfig(configs []map[string]interface{}, ingressClass string) map[string]interface{} {
+	exact := fmt.Sprintf("contour-%s-configuration", ingressClass)
 	var loose map[string]interface{}
 	for _, cfg := range configs {
 		name, _, _ := unstructured.NestedString(cfg, "metadata", "name")
 		if name == exact {
 			return cfg
 		}
-		if loose == nil && strings.Contains("-"+name+"-", "-"+fleet+"-") {
+		if loose == nil && strings.Contains("-"+name+"-", "-"+ingressClass+"-") {
 			loose = cfg
 		}
 	}

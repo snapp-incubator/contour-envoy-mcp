@@ -46,11 +46,11 @@ In OKD4 clusters where the default OpenShift router has been replaced with **Pro
 | `envoy_runtime` | Envoy runtime configuration |
 | `envoy_memory` | Envoy memory allocation details |
 
-### Fleet Discovery & Contour Debug Tools
+### Ingress Class Discovery & Contour Debug Tools
 | Tool | Description |
 |------|-------------|
-| `list_envoy_fleets` | List Envoy fleets (ingress classes) with pod readiness and resolved admin port |
-| `list_envoy_pods` | List Envoy pods, optionally filtered by fleet |
+| `list_envoy_ingress_classes` | List Envoy ingress classes with pod readiness and resolved admin port |
+| `list_envoy_pods` | List Envoy pods, optionally filtered by ingress class |
 | `get_contour_dag` | Contour's computed routing DAG (DOT format) from the debug server |
 
 ## How Envoy admin access works
@@ -64,9 +64,9 @@ This server reaches it with a Kubernetes **port-forward** tunnel
 (`pods/portforward`), which connects inside the pod's network namespace where
 localhost-bound ports are reachable. Every `envoy_*` tool accepts:
 
-- `fleet` — ingress class (e.g. `public`, `private`, `inter-dc`); a ready
-  Envoy pod of that fleet is picked automatically. The admin port is resolved
-  from the fleet's ContourConfiguration.
+- `ingress_class` — ingress class (e.g. `public`, `private`, `inter-dc`); a ready
+  Envoy pod of that class is picked automatically. The admin port is resolved
+  from the class ContourConfiguration.
 - `pod` — a specific Envoy pod name (daemonset state differs per node).
 - `admin_port` — explicit admin port override.
 - `envoy_url` — direct admin URL, bypassing pod targeting (local debugging or
@@ -97,8 +97,8 @@ make build
 # Or specify kubeconfig
 ./bin/contour-envoy-mcp -kubeconfig ~/.kube/config
 
-# With a default Envoy fleet (envoy_* tools work without a 'fleet' argument)
-./bin/contour-envoy-mcp -default-fleet public
+# With a default Envoy ingress class (envoy_* tools work without an 'ingress_class' argument)
+./bin/contour-envoy-mcp -default-ingress-class public
 
 # With a direct Envoy admin URL (advanced; only if the admin endpoint is
 # network-reachable, e.g. local envoy or a custom socat sidecar)
@@ -128,9 +128,9 @@ docker run -i contour-envoy-mcp
 | `-addr` | `:8080` | Listen address for HTTP transport |
 | `-kubeconfig` | (auto) | Path to kubeconfig file |
 | `-context` | (current) | Kubernetes context to use |
-| `-default-fleet` | (none) | Default Envoy fleet (ingress class) when a tool call passes no fleet/pod/envoy_url |
+| `-default-ingress-class` | (none) | Default Envoy ingress class when a tool call passes no ingress_class/pod/envoy_url |
 | `-envoy-admin-url` | (none) | Direct Envoy admin API base URL (advanced; normally unused — admin is reached via port-forward) |
-| `-contour-namespace` | `projectcontour` | Namespace where the Contour/Envoy fleets run |
+| `-contour-namespace` | `projectcontour` | Namespace where the Contour/Envoy ingress classes run |
 | `-version` | | Print version and exit |
 
 ### Environment Variables
@@ -150,7 +150,7 @@ Add to your MCP client configuration:
   "mcpServers": {
     "contour-envoy": {
       "command": "contour-envoy-mcp",
-      "args": ["-kubeconfig", "/path/to/kubeconfig", "-contour-namespace", "projectcontour", "-default-fleet", "public"]
+      "args": ["-kubeconfig", "/path/to/kubeconfig", "-contour-namespace", "projectcontour", "-default-ingress-class", "public"]
     }
   }
 }
@@ -261,7 +261,7 @@ spec:
         args:
         - -transport=stdio
         - -contour-namespace=projectcontour
-        - -default-fleet=public
+        - -default-ingress-class=public
 ```
 
 ### As a Deployment with HTTP transport

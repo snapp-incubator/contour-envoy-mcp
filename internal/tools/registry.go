@@ -16,40 +16,40 @@ import (
 	"github.com/snapp-incubator/contour-envoy-mcp/internal/k8s"
 )
 
-// Pod label conventions of the Bitnami Contour chart: each fleet (ingress
-// class) is a chart alias, so the fleet name lands in app.kubernetes.io/name
+// Pod label conventions of the Bitnami Contour chart: each ingress class (an
+// class) is a chart alias, so the ingress class name lands in app.kubernetes.io/name
 // and the role (envoy / contour) in app.kubernetes.io/component.
 const (
-	componentLabel = "app.kubernetes.io/component"
-	fleetLabel     = "app.kubernetes.io/name"
+	componentLabel    = "app.kubernetes.io/component"
+	ingressClassLabel = "app.kubernetes.io/name"
 
 	envoySelector   = componentLabel + "=envoy"
 	contourSelector = componentLabel + "=contour"
 )
 
-// PodLister provides pod discovery for fleet-targeted tools.
+// PodLister provides pod discovery for ingress-class-targeted tools.
 type PodLister interface {
 	ListPods(ctx context.Context, namespace, labelSelector string) ([]k8s.PodInfo, error)
 }
 
 // Registry holds all MCP tool definitions and their handlers.
 type Registry struct {
-	contourClient *contour.Client
-	envoyClient   *envoy.AdminClient
-	pods          PodLister
-	ingressNS     string
-	defaultFleet  string
-	toolCount     int
+	contourClient       *contour.Client
+	envoyClient         *envoy.AdminClient
+	pods                PodLister
+	ingressNS           string
+	defaultIngressClass string
+	toolCount           int
 }
 
-// SetDefaultFleet sets the fleet targeted when an envoy_* tool call passes no
-// fleet, pod, or envoy_url.
-func (r *Registry) SetDefaultFleet(fleet string) {
-	r.defaultFleet = fleet
+// SetDefaultIngressClass sets the ingress class targeted when an envoy_* tool call passes no
+// ingress class, pod, or envoy_url.
+func (r *Registry) SetDefaultIngressClass(ingressClass string) {
+	r.defaultIngressClass = ingressClass
 }
 
 // NewRegistry creates a new tool registry with the given clients.
-// ingressNamespace is where the Contour and Envoy fleets run.
+// ingressNamespace is where the Contour and Envoy ingress classes run.
 func NewRegistry(contourClient *contour.Client, envoyClient *envoy.AdminClient, pods PodLister, ingressNamespace string) *Registry {
 	return &Registry{
 		contourClient: contourClient,
@@ -195,17 +195,17 @@ func (r *Registry) RegisterAll(s *server.MCPServer) error {
 	r.register(s, "envoy_config_dump",
 		mcp.NewTool("envoy_config_dump",
 			mcp.WithDescription("Get the full Envoy configuration dump via the admin API. Returns listeners, clusters, routes, endpoints, and secrets."),
-			mcp.WithString("fleet",
-				mcp.Description("Envoy fleet / ingress class to target (e.g. public, private, inter-dc, inter-venture, ode-private). A ready Envoy pod of the fleet is reached via Kubernetes port-forward. Use list_envoy_fleets to discover."),
+			mcp.WithString("ingress_class",
+				mcp.Description("Envoy ingress class to target (e.g. public, private, inter-dc, inter-venture, ode-private). A ready Envoy pod of that ingress class is reached via Kubernetes port-forward. Use list_envoy_ingress_classes to discover."),
 			),
 			mcp.WithString("pod",
-				mcp.Description("Specific Envoy pod name to target. Defaults to the first ready pod of the fleet."),
+				mcp.Description("Specific Envoy pod name to target. Defaults to the first ready pod of the ingress class."),
 			),
 			mcp.WithNumber("admin_port",
-				mcp.Description("Envoy admin port override. Defaults to the fleet's ContourConfiguration spec.envoy.network.adminPort (Contour default 9001)."),
+				mcp.Description("Envoy admin port override. Defaults to the ingress class ContourConfiguration spec.envoy.network.adminPort (Contour default 9001)."),
 			),
 			mcp.WithString("envoy_url",
-				mcp.Description("Direct Envoy admin API base URL (advanced; bypasses fleet/pod targeting)."),
+				mcp.Description("Direct Envoy admin API base URL (advanced; bypasses ingress-class/pod targeting)."),
 			),
 			mcp.WithString("resource_type",
 				mcp.Description("Filter by resource type: listener, route, cluster, endpoint, secret, scoped_route."),
@@ -217,17 +217,17 @@ func (r *Registry) RegisterAll(s *server.MCPServer) error {
 	r.register(s, "envoy_listeners",
 		mcp.NewTool("envoy_listeners",
 			mcp.WithDescription("Get Envoy listener configuration. Shows all listeners, their filter chains, and associated routes."),
-			mcp.WithString("fleet",
-				mcp.Description("Envoy fleet / ingress class to target (e.g. public, private, inter-dc, inter-venture, ode-private). A ready Envoy pod of the fleet is reached via Kubernetes port-forward. Use list_envoy_fleets to discover."),
+			mcp.WithString("ingress_class",
+				mcp.Description("Envoy ingress class to target (e.g. public, private, inter-dc, inter-venture, ode-private). A ready Envoy pod of that ingress class is reached via Kubernetes port-forward. Use list_envoy_ingress_classes to discover."),
 			),
 			mcp.WithString("pod",
-				mcp.Description("Specific Envoy pod name to target. Defaults to the first ready pod of the fleet."),
+				mcp.Description("Specific Envoy pod name to target. Defaults to the first ready pod of the ingress class."),
 			),
 			mcp.WithNumber("admin_port",
-				mcp.Description("Envoy admin port override. Defaults to the fleet's ContourConfiguration spec.envoy.network.adminPort (Contour default 9001)."),
+				mcp.Description("Envoy admin port override. Defaults to the ingress class ContourConfiguration spec.envoy.network.adminPort (Contour default 9001)."),
 			),
 			mcp.WithString("envoy_url",
-				mcp.Description("Direct Envoy admin API base URL (advanced; bypasses fleet/pod targeting)."),
+				mcp.Description("Direct Envoy admin API base URL (advanced; bypasses ingress-class/pod targeting)."),
 			),
 		),
 		r.handleEnvoyListeners,
@@ -236,17 +236,17 @@ func (r *Registry) RegisterAll(s *server.MCPServer) error {
 	r.register(s, "envoy_routes",
 		mcp.NewTool("envoy_routes",
 			mcp.WithDescription("Get Envoy route configuration. Shows virtual hosts, route matching rules, and cluster mappings."),
-			mcp.WithString("fleet",
-				mcp.Description("Envoy fleet / ingress class to target (e.g. public, private, inter-dc, inter-venture, ode-private). A ready Envoy pod of the fleet is reached via Kubernetes port-forward. Use list_envoy_fleets to discover."),
+			mcp.WithString("ingress_class",
+				mcp.Description("Envoy ingress class to target (e.g. public, private, inter-dc, inter-venture, ode-private). A ready Envoy pod of that ingress class is reached via Kubernetes port-forward. Use list_envoy_ingress_classes to discover."),
 			),
 			mcp.WithString("pod",
-				mcp.Description("Specific Envoy pod name to target. Defaults to the first ready pod of the fleet."),
+				mcp.Description("Specific Envoy pod name to target. Defaults to the first ready pod of the ingress class."),
 			),
 			mcp.WithNumber("admin_port",
-				mcp.Description("Envoy admin port override. Defaults to the fleet's ContourConfiguration spec.envoy.network.adminPort (Contour default 9001)."),
+				mcp.Description("Envoy admin port override. Defaults to the ingress class ContourConfiguration spec.envoy.network.adminPort (Contour default 9001)."),
 			),
 			mcp.WithString("envoy_url",
-				mcp.Description("Direct Envoy admin API base URL (advanced; bypasses fleet/pod targeting)."),
+				mcp.Description("Direct Envoy admin API base URL (advanced; bypasses ingress-class/pod targeting)."),
 			),
 		),
 		r.handleEnvoyRoutes,
@@ -255,17 +255,17 @@ func (r *Registry) RegisterAll(s *server.MCPServer) error {
 	r.register(s, "envoy_clusters",
 		mcp.NewTool("envoy_clusters",
 			mcp.WithDescription("Get Envoy cluster configuration. Shows upstream clusters, endpoints, health status, and circuit breaker settings."),
-			mcp.WithString("fleet",
-				mcp.Description("Envoy fleet / ingress class to target (e.g. public, private, inter-dc, inter-venture, ode-private). A ready Envoy pod of the fleet is reached via Kubernetes port-forward. Use list_envoy_fleets to discover."),
+			mcp.WithString("ingress_class",
+				mcp.Description("Envoy ingress class to target (e.g. public, private, inter-dc, inter-venture, ode-private). A ready Envoy pod of that ingress class is reached via Kubernetes port-forward. Use list_envoy_ingress_classes to discover."),
 			),
 			mcp.WithString("pod",
-				mcp.Description("Specific Envoy pod name to target. Defaults to the first ready pod of the fleet."),
+				mcp.Description("Specific Envoy pod name to target. Defaults to the first ready pod of the ingress class."),
 			),
 			mcp.WithNumber("admin_port",
-				mcp.Description("Envoy admin port override. Defaults to the fleet's ContourConfiguration spec.envoy.network.adminPort (Contour default 9001)."),
+				mcp.Description("Envoy admin port override. Defaults to the ingress class ContourConfiguration spec.envoy.network.adminPort (Contour default 9001)."),
 			),
 			mcp.WithString("envoy_url",
-				mcp.Description("Direct Envoy admin API base URL (advanced; bypasses fleet/pod targeting)."),
+				mcp.Description("Direct Envoy admin API base URL (advanced; bypasses ingress-class/pod targeting)."),
 			),
 		),
 		r.handleEnvoyClusters,
@@ -274,17 +274,17 @@ func (r *Registry) RegisterAll(s *server.MCPServer) error {
 	r.register(s, "envoy_endpoints",
 		mcp.NewTool("envoy_endpoints",
 			mcp.WithDescription("Get Envoy endpoint configuration. Shows upstream host addresses, health status, and load balancing weights."),
-			mcp.WithString("fleet",
-				mcp.Description("Envoy fleet / ingress class to target (e.g. public, private, inter-dc, inter-venture, ode-private). A ready Envoy pod of the fleet is reached via Kubernetes port-forward. Use list_envoy_fleets to discover."),
+			mcp.WithString("ingress_class",
+				mcp.Description("Envoy ingress class to target (e.g. public, private, inter-dc, inter-venture, ode-private). A ready Envoy pod of that ingress class is reached via Kubernetes port-forward. Use list_envoy_ingress_classes to discover."),
 			),
 			mcp.WithString("pod",
-				mcp.Description("Specific Envoy pod name to target. Defaults to the first ready pod of the fleet."),
+				mcp.Description("Specific Envoy pod name to target. Defaults to the first ready pod of the ingress class."),
 			),
 			mcp.WithNumber("admin_port",
-				mcp.Description("Envoy admin port override. Defaults to the fleet's ContourConfiguration spec.envoy.network.adminPort (Contour default 9001)."),
+				mcp.Description("Envoy admin port override. Defaults to the ingress class ContourConfiguration spec.envoy.network.adminPort (Contour default 9001)."),
 			),
 			mcp.WithString("envoy_url",
-				mcp.Description("Direct Envoy admin API base URL (advanced; bypasses fleet/pod targeting)."),
+				mcp.Description("Direct Envoy admin API base URL (advanced; bypasses ingress-class/pod targeting)."),
 			),
 		),
 		r.handleEnvoyEndpoints,
@@ -293,17 +293,17 @@ func (r *Registry) RegisterAll(s *server.MCPServer) error {
 	r.register(s, "envoy_stats",
 		mcp.NewTool("envoy_stats",
 			mcp.WithDescription("Get Envoy server statistics. Includes request counts, connection metrics, and per-cluster stats."),
-			mcp.WithString("fleet",
-				mcp.Description("Envoy fleet / ingress class to target (e.g. public, private, inter-dc, inter-venture, ode-private). A ready Envoy pod of the fleet is reached via Kubernetes port-forward. Use list_envoy_fleets to discover."),
+			mcp.WithString("ingress_class",
+				mcp.Description("Envoy ingress class to target (e.g. public, private, inter-dc, inter-venture, ode-private). A ready Envoy pod of that ingress class is reached via Kubernetes port-forward. Use list_envoy_ingress_classes to discover."),
 			),
 			mcp.WithString("pod",
-				mcp.Description("Specific Envoy pod name to target. Defaults to the first ready pod of the fleet."),
+				mcp.Description("Specific Envoy pod name to target. Defaults to the first ready pod of the ingress class."),
 			),
 			mcp.WithNumber("admin_port",
-				mcp.Description("Envoy admin port override. Defaults to the fleet's ContourConfiguration spec.envoy.network.adminPort (Contour default 9001)."),
+				mcp.Description("Envoy admin port override. Defaults to the ingress class ContourConfiguration spec.envoy.network.adminPort (Contour default 9001)."),
 			),
 			mcp.WithString("envoy_url",
-				mcp.Description("Direct Envoy admin API base URL (advanced; bypasses fleet/pod targeting)."),
+				mcp.Description("Direct Envoy admin API base URL (advanced; bypasses ingress-class/pod targeting)."),
 			),
 			mcp.WithString("filter",
 				mcp.Description("Regex filter for stats (e.g. 'cluster\\..*\\.(membership|rq)')."),
@@ -318,17 +318,17 @@ func (r *Registry) RegisterAll(s *server.MCPServer) error {
 	r.register(s, "envoy_clusters_health",
 		mcp.NewTool("envoy_clusters_health",
 			mcp.WithDescription("Get Envoy cluster health summary. Shows membership status, pressure, and failover information for each cluster."),
-			mcp.WithString("fleet",
-				mcp.Description("Envoy fleet / ingress class to target (e.g. public, private, inter-dc, inter-venture, ode-private). A ready Envoy pod of the fleet is reached via Kubernetes port-forward. Use list_envoy_fleets to discover."),
+			mcp.WithString("ingress_class",
+				mcp.Description("Envoy ingress class to target (e.g. public, private, inter-dc, inter-venture, ode-private). A ready Envoy pod of that ingress class is reached via Kubernetes port-forward. Use list_envoy_ingress_classes to discover."),
 			),
 			mcp.WithString("pod",
-				mcp.Description("Specific Envoy pod name to target. Defaults to the first ready pod of the fleet."),
+				mcp.Description("Specific Envoy pod name to target. Defaults to the first ready pod of the ingress class."),
 			),
 			mcp.WithNumber("admin_port",
-				mcp.Description("Envoy admin port override. Defaults to the fleet's ContourConfiguration spec.envoy.network.adminPort (Contour default 9001)."),
+				mcp.Description("Envoy admin port override. Defaults to the ingress class ContourConfiguration spec.envoy.network.adminPort (Contour default 9001)."),
 			),
 			mcp.WithString("envoy_url",
-				mcp.Description("Direct Envoy admin API base URL (advanced; bypasses fleet/pod targeting)."),
+				mcp.Description("Direct Envoy admin API base URL (advanced; bypasses ingress-class/pod targeting)."),
 			),
 		),
 		r.handleEnvoyClustersHealth,
@@ -337,17 +337,17 @@ func (r *Registry) RegisterAll(s *server.MCPServer) error {
 	r.register(s, "envoy_server_info",
 		mcp.NewTool("envoy_server_info",
 			mcp.WithDescription("Get Envoy server information including version, uptime, current state, and hot restart status."),
-			mcp.WithString("fleet",
-				mcp.Description("Envoy fleet / ingress class to target (e.g. public, private, inter-dc, inter-venture, ode-private). A ready Envoy pod of the fleet is reached via Kubernetes port-forward. Use list_envoy_fleets to discover."),
+			mcp.WithString("ingress_class",
+				mcp.Description("Envoy ingress class to target (e.g. public, private, inter-dc, inter-venture, ode-private). A ready Envoy pod of that ingress class is reached via Kubernetes port-forward. Use list_envoy_ingress_classes to discover."),
 			),
 			mcp.WithString("pod",
-				mcp.Description("Specific Envoy pod name to target. Defaults to the first ready pod of the fleet."),
+				mcp.Description("Specific Envoy pod name to target. Defaults to the first ready pod of the ingress class."),
 			),
 			mcp.WithNumber("admin_port",
-				mcp.Description("Envoy admin port override. Defaults to the fleet's ContourConfiguration spec.envoy.network.adminPort (Contour default 9001)."),
+				mcp.Description("Envoy admin port override. Defaults to the ingress class ContourConfiguration spec.envoy.network.adminPort (Contour default 9001)."),
 			),
 			mcp.WithString("envoy_url",
-				mcp.Description("Direct Envoy admin API base URL (advanced; bypasses fleet/pod targeting)."),
+				mcp.Description("Direct Envoy admin API base URL (advanced; bypasses ingress-class/pod targeting)."),
 			),
 		),
 		r.handleEnvoyServerInfo,
@@ -356,17 +356,17 @@ func (r *Registry) RegisterAll(s *server.MCPServer) error {
 	r.register(s, "envoy_certs",
 		mcp.NewTool("envoy_certs",
 			mcp.WithDescription("Get TLS certificate information from Envoy. Shows certificate chains, expiration dates, and serial numbers."),
-			mcp.WithString("fleet",
-				mcp.Description("Envoy fleet / ingress class to target (e.g. public, private, inter-dc, inter-venture, ode-private). A ready Envoy pod of the fleet is reached via Kubernetes port-forward. Use list_envoy_fleets to discover."),
+			mcp.WithString("ingress_class",
+				mcp.Description("Envoy ingress class to target (e.g. public, private, inter-dc, inter-venture, ode-private). A ready Envoy pod of that ingress class is reached via Kubernetes port-forward. Use list_envoy_ingress_classes to discover."),
 			),
 			mcp.WithString("pod",
-				mcp.Description("Specific Envoy pod name to target. Defaults to the first ready pod of the fleet."),
+				mcp.Description("Specific Envoy pod name to target. Defaults to the first ready pod of the ingress class."),
 			),
 			mcp.WithNumber("admin_port",
-				mcp.Description("Envoy admin port override. Defaults to the fleet's ContourConfiguration spec.envoy.network.adminPort (Contour default 9001)."),
+				mcp.Description("Envoy admin port override. Defaults to the ingress class ContourConfiguration spec.envoy.network.adminPort (Contour default 9001)."),
 			),
 			mcp.WithString("envoy_url",
-				mcp.Description("Direct Envoy admin API base URL (advanced; bypasses fleet/pod targeting)."),
+				mcp.Description("Direct Envoy admin API base URL (advanced; bypasses ingress-class/pod targeting)."),
 			),
 		),
 		r.handleEnvoyCerts,
@@ -375,17 +375,17 @@ func (r *Registry) RegisterAll(s *server.MCPServer) error {
 	r.register(s, "envoy_ready",
 		mcp.NewTool("envoy_ready",
 			mcp.WithDescription("Check if Envoy is ready to accept traffic. Returns live if ready, or an error if not."),
-			mcp.WithString("fleet",
-				mcp.Description("Envoy fleet / ingress class to target (e.g. public, private, inter-dc, inter-venture, ode-private). A ready Envoy pod of the fleet is reached via Kubernetes port-forward. Use list_envoy_fleets to discover."),
+			mcp.WithString("ingress_class",
+				mcp.Description("Envoy ingress class to target (e.g. public, private, inter-dc, inter-venture, ode-private). A ready Envoy pod of that ingress class is reached via Kubernetes port-forward. Use list_envoy_ingress_classes to discover."),
 			),
 			mcp.WithString("pod",
-				mcp.Description("Specific Envoy pod name to target. Defaults to the first ready pod of the fleet."),
+				mcp.Description("Specific Envoy pod name to target. Defaults to the first ready pod of the ingress class."),
 			),
 			mcp.WithNumber("admin_port",
-				mcp.Description("Envoy admin port override. Defaults to the fleet's ContourConfiguration spec.envoy.network.adminPort (Contour default 9001)."),
+				mcp.Description("Envoy admin port override. Defaults to the ingress class ContourConfiguration spec.envoy.network.adminPort (Contour default 9001)."),
 			),
 			mcp.WithString("envoy_url",
-				mcp.Description("Direct Envoy admin API base URL (advanced; bypasses fleet/pod targeting)."),
+				mcp.Description("Direct Envoy admin API base URL (advanced; bypasses ingress-class/pod targeting)."),
 			),
 		),
 		r.handleEnvoyReady,
@@ -394,17 +394,17 @@ func (r *Registry) RegisterAll(s *server.MCPServer) error {
 	r.register(s, "envoy_runtime",
 		mcp.NewTool("envoy_runtime",
 			mcp.WithDescription("Get Envoy runtime configuration. Shows feature flags and runtime override values."),
-			mcp.WithString("fleet",
-				mcp.Description("Envoy fleet / ingress class to target (e.g. public, private, inter-dc, inter-venture, ode-private). A ready Envoy pod of the fleet is reached via Kubernetes port-forward. Use list_envoy_fleets to discover."),
+			mcp.WithString("ingress_class",
+				mcp.Description("Envoy ingress class to target (e.g. public, private, inter-dc, inter-venture, ode-private). A ready Envoy pod of that ingress class is reached via Kubernetes port-forward. Use list_envoy_ingress_classes to discover."),
 			),
 			mcp.WithString("pod",
-				mcp.Description("Specific Envoy pod name to target. Defaults to the first ready pod of the fleet."),
+				mcp.Description("Specific Envoy pod name to target. Defaults to the first ready pod of the ingress class."),
 			),
 			mcp.WithNumber("admin_port",
-				mcp.Description("Envoy admin port override. Defaults to the fleet's ContourConfiguration spec.envoy.network.adminPort (Contour default 9001)."),
+				mcp.Description("Envoy admin port override. Defaults to the ingress class ContourConfiguration spec.envoy.network.adminPort (Contour default 9001)."),
 			),
 			mcp.WithString("envoy_url",
-				mcp.Description("Direct Envoy admin API base URL (advanced; bypasses fleet/pod targeting)."),
+				mcp.Description("Direct Envoy admin API base URL (advanced; bypasses ingress-class/pod targeting)."),
 			),
 		),
 		r.handleEnvoyRuntime,
@@ -413,36 +413,36 @@ func (r *Registry) RegisterAll(s *server.MCPServer) error {
 	r.register(s, "envoy_memory",
 		mcp.NewTool("envoy_memory",
 			mcp.WithDescription("Get Envoy memory allocation details (heap size, allocated, page heap)."),
-			mcp.WithString("fleet",
-				mcp.Description("Envoy fleet / ingress class to target. Use list_envoy_fleets to discover."),
+			mcp.WithString("ingress_class",
+				mcp.Description("Envoy ingress class to target. Use list_envoy_ingress_classes to discover."),
 			),
 			mcp.WithString("pod",
-				mcp.Description("Specific Envoy pod name to target. Defaults to the first ready pod of the fleet."),
+				mcp.Description("Specific Envoy pod name to target. Defaults to the first ready pod of the ingress class."),
 			),
 			mcp.WithNumber("admin_port",
 				mcp.Description("Envoy admin port override."),
 			),
 			mcp.WithString("envoy_url",
-				mcp.Description("Direct Envoy admin API base URL (advanced; bypasses fleet/pod targeting)."),
+				mcp.Description("Direct Envoy admin API base URL (advanced; bypasses ingress-class/pod targeting)."),
 			),
 		),
 		r.handleEnvoyMemory,
 	)
 
-	// ─── Fleet Discovery & Contour Debug Tools ───
+	// ─── IngressClass Discovery & Contour Debug Tools ───
 
-	r.register(s, "list_envoy_fleets",
-		mcp.NewTool("list_envoy_fleets",
-			mcp.WithDescription("List Envoy fleets (ingress classes) running in the ingress namespace, with pod readiness counts and the admin port resolved from each fleet's ContourConfiguration. Use this first to discover valid 'fleet' values for the envoy_* tools."),
+	r.register(s, "list_envoy_ingress_classes",
+		mcp.NewTool("list_envoy_ingress_classes",
+			mcp.WithDescription("List Envoy ingress classes running in the ingress namespace, with pod readiness counts and the admin port resolved from each ingress class ContourConfiguration. Use this first to discover valid 'ingress_class' values for the envoy_* tools."),
 		),
-		r.handleListEnvoyFleets,
+		r.handleListEnvoyIngressClasses,
 	)
 
 	r.register(s, "list_envoy_pods",
 		mcp.NewTool("list_envoy_pods",
-			mcp.WithDescription("List Envoy pods in the ingress namespace, optionally filtered by fleet. Shows pod name, node, IP, phase, and readiness. Useful for targeting a specific pod with the envoy_* tools (daemonset state differs per node)."),
-			mcp.WithString("fleet",
-				mcp.Description("Fleet / ingress class to filter by (e.g. public). Leave empty for all fleets."),
+			mcp.WithDescription("List Envoy pods in the ingress namespace, optionally filtered by ingress class. Shows pod name, node, IP, phase, and readiness. Useful for targeting a specific pod with the envoy_* tools (daemonset state differs per node)."),
+			mcp.WithString("ingress_class",
+				mcp.Description("Ingress class to filter by (e.g. public). Leave empty for all ingress classes."),
 			),
 		),
 		r.handleListEnvoyPods,
@@ -451,12 +451,12 @@ func (r *Registry) RegisterAll(s *server.MCPServer) error {
 	r.register(s, "get_contour_dag",
 		mcp.NewTool("get_contour_dag",
 			mcp.WithDescription("Get Contour's computed routing DAG (directed acyclic graph, DOT format) from a Contour pod's debug server. This is the authoritative view of how Contour interpreted all HTTPProxy/Ingress config before programming Envoy — gold for debugging routing discrepancies."),
-			mcp.WithString("fleet",
+			mcp.WithString("ingress_class",
 				mcp.Required(),
-				mcp.Description("Contour fleet / ingress class (e.g. public, private, inter-dc)."),
+				mcp.Description("Contour ingress class (e.g. public, private, inter-dc)."),
 			),
 			mcp.WithString("pod",
-				mcp.Description("Specific Contour pod name. Defaults to the first ready Contour pod of the fleet."),
+				mcp.Description("Specific Contour pod name. Defaults to the first ready Contour pod of the ingress class."),
 			),
 		),
 		r.handleContourDAG,
@@ -468,8 +468,8 @@ func (r *Registry) RegisterAll(s *server.MCPServer) error {
 // ─── Envoy target resolution ───
 
 // envoyTarget builds the Envoy admin target for a tool call from its
-// envoy_url / fleet / pod / admin_port arguments. Resolution order:
-// envoy_url (direct) > pod > fleet (first ready pod) > server default fleet.
+// envoy_url / ingress_class / pod / admin_port arguments. Resolution order:
+// envoy_url (direct) > pod > ingress class (first ready pod) > server default ingress class.
 // With none set, an empty target is returned and the client falls back to its
 // default URL, if any.
 func (r *Registry) envoyTarget(ctx context.Context, req mcp.CallToolRequest) (envoy.Target, error) {
@@ -477,20 +477,20 @@ func (r *Registry) envoyTarget(ctx context.Context, req mcp.CallToolRequest) (en
 		return envoy.Target{URL: url}, nil
 	}
 
-	fleet := reqString(req, "fleet")
+	ingressClass := reqString(req, "ingress_class")
 	pod := reqString(req, "pod")
-	if fleet == "" && pod == "" {
-		fleet = r.defaultFleet
-		if fleet == "" {
+	if ingressClass == "" && pod == "" {
+		ingressClass = r.defaultIngressClass
+		if ingressClass == "" {
 			return envoy.Target{}, nil
 		}
 	}
 	if r.pods == nil {
-		return envoy.Target{}, fmt.Errorf("fleet/pod targeting requires Kubernetes access")
+		return envoy.Target{}, fmt.Errorf("ingress-class/pod targeting requires Kubernetes access")
 	}
 
 	if pod == "" {
-		selector := envoySelector + "," + fleetLabel + "=" + fleet
+		selector := envoySelector + "," + ingressClassLabel + "=" + ingressClass
 		pods, err := r.pods.ListPods(ctx, r.ingressNS, selector)
 		if err != nil {
 			return envoy.Target{}, err
@@ -502,17 +502,17 @@ func (r *Registry) envoyTarget(ctx context.Context, req mcp.CallToolRequest) (en
 			}
 		}
 		if pod == "" {
-			return envoy.Target{}, fmt.Errorf("no ready Envoy pods for fleet %q in namespace %s (check list_envoy_fleets)", fleet, r.ingressNS)
+			return envoy.Target{}, fmt.Errorf("no ready Envoy pods for ingress class %q in namespace %s (check list_envoy_ingress_classes)", ingressClass, r.ingressNS)
 		}
-	} else if fleet == "" {
-		// Derive the fleet from the pod's labels so the admin port lookup works.
+	} else if ingressClass == "" {
+		// Derive the ingress class from the pod's labels so the admin port lookup works.
 		pods, err := r.pods.ListPods(ctx, r.ingressNS, envoySelector)
 		if err != nil {
 			return envoy.Target{}, err
 		}
 		for _, p := range pods {
 			if p.Name == pod {
-				fleet = p.Labels[fleetLabel]
+				ingressClass = p.Labels[ingressClassLabel]
 				break
 			}
 		}
@@ -520,7 +520,7 @@ func (r *Registry) envoyTarget(ctx context.Context, req mcp.CallToolRequest) (en
 
 	port := req.GetInt("admin_port", 0)
 	if port <= 0 {
-		ports, err := r.contourClient.PortsForFleet(ctx, fleet)
+		ports, err := r.contourClient.PortsForIngressClass(ctx, ingressClass)
 		if err != nil {
 			port = contour.DefaultEnvoyAdminPort
 		} else {
@@ -683,8 +683,8 @@ func (r *Registry) handleSearchByFQDN(ctx context.Context, req mcp.CallToolReque
 	}
 
 	return textResult(map[string]interface{}{
-		"fqdn":   fqdn,
-		"count":  len(proxies),
+		"fqdn":    fqdn,
+		"count":   len(proxies),
 		"proxies": proxies,
 	}), nil
 }
@@ -743,7 +743,7 @@ func (r *Registry) handleListInvalidProxies(ctx context.Context, req mcp.CallToo
 	}
 
 	return textResult(map[string]interface{}{
-		"count":        len(summaries),
+		"count":           len(summaries),
 		"invalid_proxies": summaries,
 	}), nil
 }
@@ -762,7 +762,7 @@ func (r *Registry) handleListTLSCertDelegations(ctx context.Context, req mcp.Cal
 	}
 
 	return textResult(map[string]interface{}{
-		"count":        len(delegations),
+		"count":       len(delegations),
 		"delegations": delegations,
 	}), nil
 }
@@ -779,7 +779,7 @@ func (r *Registry) handleListExtensionServices(ctx context.Context, req mcp.Call
 	}
 
 	return textResult(map[string]interface{}{
-		"count":   len(services),
+		"count":    len(services),
 		"services": services,
 	}), nil
 }
@@ -998,11 +998,11 @@ func extractString(m map[string]interface{}, keys ...string) (string, bool, erro
 	return "", false, nil
 }
 
-// ─── Fleet Discovery & Contour Debug Handlers ───
+// ─── IngressClass Discovery & Contour Debug Handlers ───
 
-func (r *Registry) handleListEnvoyFleets(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (r *Registry) handleListEnvoyIngressClasses(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if r.pods == nil {
-		return errorResult("Fleet discovery requires Kubernetes access"), nil
+		return errorResult("IngressClass discovery requires Kubernetes access"), nil
 	}
 	pods, err := r.pods.ListPods(ctx, r.ingressNS, envoySelector)
 	if err != nil {
@@ -1012,22 +1012,22 @@ func (r *Registry) handleListEnvoyFleets(ctx context.Context, _ mcp.CallToolRequ
 		return textResultFromString(fmt.Sprintf("No Envoy pods found in namespace '%s'", r.ingressNS)), nil
 	}
 
-	type fleetSummary struct {
-		Fleet     string `json:"fleet"`
-		Pods      int    `json:"pods"`
-		ReadyPods int    `json:"readyPods"`
-		AdminPort int    `json:"adminPort"`
+	type ingressClassSummary struct {
+		IngressClass string `json:"ingress_class"`
+		Pods         int    `json:"pods"`
+		ReadyPods    int    `json:"readyPods"`
+		AdminPort    int    `json:"adminPort"`
 	}
-	byFleet := map[string]*fleetSummary{}
+	byIngressClass := map[string]*ingressClassSummary{}
 	for _, p := range pods {
-		fleet := p.Labels[fleetLabel]
-		if fleet == "" {
-			fleet = "(unlabeled)"
+		ingressClass := p.Labels[ingressClassLabel]
+		if ingressClass == "" {
+			ingressClass = "(unlabeled)"
 		}
-		fs, ok := byFleet[fleet]
+		fs, ok := byIngressClass[ingressClass]
 		if !ok {
-			fs = &fleetSummary{Fleet: fleet}
-			byFleet[fleet] = fs
+			fs = &ingressClassSummary{IngressClass: ingressClass}
+			byIngressClass[ingressClass] = fs
 		}
 		fs.Pods++
 		if p.Ready {
@@ -1035,22 +1035,22 @@ func (r *Registry) handleListEnvoyFleets(ctx context.Context, _ mcp.CallToolRequ
 		}
 	}
 
-	fleets := make([]fleetSummary, 0, len(byFleet))
-	for fleet, fs := range byFleet {
-		ports, err := r.contourClient.PortsForFleet(ctx, fleet)
+	ingressClasses := make([]ingressClassSummary, 0, len(byIngressClass))
+	for ingressClass, fs := range byIngressClass {
+		ports, err := r.contourClient.PortsForIngressClass(ctx, ingressClass)
 		if err != nil {
 			fs.AdminPort = contour.DefaultEnvoyAdminPort
 		} else {
 			fs.AdminPort = ports.AdminPort
 		}
-		fleets = append(fleets, *fs)
+		ingressClasses = append(ingressClasses, *fs)
 	}
-	sort.Slice(fleets, func(i, j int) bool { return fleets[i].Fleet < fleets[j].Fleet })
+	sort.Slice(ingressClasses, func(i, j int) bool { return ingressClasses[i].IngressClass < ingressClasses[j].IngressClass })
 
 	return textResult(map[string]interface{}{
-		"namespace": r.ingressNS,
-		"count":     len(fleets),
-		"fleets":    fleets,
+		"namespace":      r.ingressNS,
+		"count":          len(ingressClasses),
+		"ingressClasses": ingressClasses,
 	}), nil
 }
 
@@ -1059,9 +1059,9 @@ func (r *Registry) handleListEnvoyPods(ctx context.Context, req mcp.CallToolRequ
 		return errorResult("Pod discovery requires Kubernetes access"), nil
 	}
 	selector := envoySelector
-	fleet := reqString(req, "fleet")
-	if fleet != "" {
-		selector += "," + fleetLabel + "=" + fleet
+	ingressClass := reqString(req, "ingress_class")
+	if ingressClass != "" {
+		selector += "," + ingressClassLabel + "=" + ingressClass
 	}
 	pods, err := r.pods.ListPods(ctx, r.ingressNS, selector)
 	if err != nil {
@@ -1075,9 +1075,9 @@ func (r *Registry) handleListEnvoyPods(ctx context.Context, req mcp.CallToolRequ
 }
 
 func (r *Registry) handleContourDAG(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	fleet := reqString(req, "fleet")
-	if fleet == "" {
-		return errorResult("'fleet' is required"), nil
+	ingressClass := reqString(req, "ingress_class")
+	if ingressClass == "" {
+		return errorResult("'ingress_class' is required"), nil
 	}
 	if r.pods == nil {
 		return errorResult("Contour DAG access requires Kubernetes access"), nil
@@ -1085,7 +1085,7 @@ func (r *Registry) handleContourDAG(ctx context.Context, req mcp.CallToolRequest
 
 	pod := reqString(req, "pod")
 	if pod == "" {
-		selector := contourSelector + "," + fleetLabel + "=" + fleet
+		selector := contourSelector + "," + ingressClassLabel + "=" + ingressClass
 		pods, err := r.pods.ListPods(ctx, r.ingressNS, selector)
 		if err != nil {
 			return errorResult("Failed to list Contour pods: %v", err), nil
@@ -1097,11 +1097,11 @@ func (r *Registry) handleContourDAG(ctx context.Context, req mcp.CallToolRequest
 			}
 		}
 		if pod == "" {
-			return errorResult("No ready Contour pods for fleet '%s' in namespace %s", fleet, r.ingressNS), nil
+			return errorResult("No ready Contour pods for ingress class '%s' in namespace %s", ingressClass, r.ingressNS), nil
 		}
 	}
 
-	ports, err := r.contourClient.PortsForFleet(ctx, fleet)
+	ports, err := r.contourClient.PortsForIngressClass(ctx, ingressClass)
 	if err != nil {
 		return errorResult("Failed to resolve Contour debug port: %v", err), nil
 	}

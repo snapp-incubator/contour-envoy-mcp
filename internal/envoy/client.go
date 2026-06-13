@@ -58,7 +58,7 @@ func NewAdminClient(baseURL string, forwarder PodForwarder) *AdminClient {
 }
 
 // ErrNoTarget is returned when a call has no way to reach an Envoy admin API.
-var ErrNoTarget = errors.New("no Envoy target: pass 'fleet' or 'pod' (cluster mode), 'envoy_url' (direct mode), or start the server with -envoy-admin-url")
+var ErrNoTarget = errors.New("no Envoy target: pass 'ingress_class' or 'pod' (cluster mode), 'envoy_url' (direct mode), or start the server with -envoy-admin-url")
 
 func noop() {}
 
